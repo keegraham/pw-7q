@@ -60,21 +60,27 @@
   .fslog .e.warn .note { color:#fbbf24; } .fslog .e.error .note { color:#f87171; } .fslog .e.info .note { color:#86efac; }
   footer { text-align:center; color:var(--muted); font-size:12px; margin-top:30px; }
   #copyArea { width:100%; height:120px; margin-top:6px; display:none; }
+  .lead-state-box { margin-top:10px; font-size:14px; }
+  .is-success, .form-msg--sent, [data-state="sent"] { color:var(--ok); }
+  .is-error, .form-msg--error, [data-state="failed"] { color:var(--err); }
 </style>
 
 <script>
-/* ---------- Simulated Fullstory browser API (records calls; nothing is sent anywhere) ---------- */
+/* ---------- Simulated Fullstory browser API (records calls; nothing is sent anywhere). Log survives page loads in this tab. ---------- */
 (function () {
+  var KEY = 'pw_fs_log';
   var log = [];
-  var pageNamesByPath = {};
+  try { log = JSON.parse(sessionStorage.getItem(KEY) || '[]'); } catch (e) { log = []; }
   var currentUid = null;
   var listeners = [];
+  function save() { try { sessionStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} }
   function clone(x) { try { return JSON.parse(JSON.stringify(x)); } catch (e) { return String(x); } }
   function record(method, args, level, note) {
     var entry = { n: log.length + 1, time: new Date().toISOString().slice(11, 23), path: location.pathname + location.search, method: method, args: clone(args), level: level, note: note || '' };
-    log.push(entry);
+    log.push(entry); save();
     listeners.forEach(function (fn) { try { fn(entry); } catch (e) {} });
   }
+  var pageNameSet = null;
   function FS(method, args) {
     if (typeof method !== 'string') { record(String(method), args, 'error', 'First argument must be a method name string, e.g. FS("trackEvent", {...}).'); return; }
     switch (method) {
@@ -86,11 +92,8 @@
         if (!args || (args.type !== 'page' && args.type !== 'user')) { record(method, args, 'error', 'setProperties requires type: "page" or "user".'); return; }
         if (!args.properties || typeof args.properties !== 'object') { record(method, args, 'error', 'setProperties requires a properties object.'); return; }
         if (args.type === 'page' && args.properties.pageName !== undefined) {
-          var p = location.pathname;
-          if (pageNamesByPath[p] !== undefined && pageNamesByPath[p] !== args.properties.pageName) {
-            record(method, args, 'error', 'pageNameChanged: a different pageName was set without a URL path change. Fullstory rejects the new pageName.'); return;
-          }
-          pageNamesByPath[p] = args.properties.pageName;
+          if (pageNameSet !== null && pageNameSet !== args.properties.pageName) { record(method, args, 'error', 'pageNameChanged: a different pageName was set on the same page. Fullstory rejects the new pageName.'); return; }
+          pageNameSet = args.properties.pageName;
         }
         record(method, args, 'ok'); return;
       case 'setIdentity':
@@ -107,24 +110,53 @@
   FS.event = legacy('event'); FS.identify = legacy('identify'); FS.setUserVars = legacy('setUserVars'); FS.setVars = legacy('setVars'); FS.anonymize = legacy('anonymize');
   window._fs_namespace = 'FS';
   window.FS = FS;
-  window.__fsSim = { log: log, onRecord: function (fn) { listeners.push(fn); }, clear: function () { log.length = 0; } };
+  window.__fsSim = { log: log, onRecord: function (fn) { listeners.push(fn); }, clear: function () { log.length = 0; save(); } };
 })();
 
-/* ---------- Data layer schema for this build ---------- */
+/* ---------- Site build config ---------- */
 var V = {
   build: 'PW-7Q',
-  pageEvent: 'page_ready', routeEvent: 'virtual_pageview',
-  page: function (type, name) { return { page: { type: type, name: name } }; },
-  search: function (term, count) { return { event: 'search_results', search: { term: term, count: count } }; },
-  filter: function (n, v) { return { event: 'filter_change', filter: { name: n, value: v } }; },
-  listing: function (l) { var o = { id: l.id, category: l.category, make: l.make, dealer_id: l.dealer }; if (l.price) o.price = l.price; return { event: 'listing_detail', listing: o }; },
-  lead: function (s) { return s.ok ? { event: 'lead_attempt', lead: { status: 'success', type: 'email_dealer', id: s.leadId } } : { event: 'lead_attempt', lead: { status: 'error', type: 'email_dealer', error: 'invalid_email' } }; },
-  login: function (u) { return { event: 'user_login', user: { id: u.id, email: u.email, tier: u.tier } }; },
-  consent: function (g) { return { event: 'consent_update', consent: { analytics: g ? 'granted' : 'denied' } }; },
-  phoneMain: 'class="btn js-reveal-phone"', phoneMini: 'class="mini js-reveal-phone"'
+  phoneMain: 'Listing Phone Number Click - Inline',
+  phoneSimilar: 'Listing Phone Number Click - Similar',
+  leadMessage: function (ok, id) { return ok ? '<div class="lead-msg is-success" data-lead-id="' + id + '">Sent! Your reference number is ' + id + '.</div>' : '<div class="lead-msg is-error">Please enter a valid email address.</div>'; }
 };
 
-/* ---------- GTM loader: container ID from ?gtm=GTM-XXXX (remembered in this browser) ---------- */
+/* ---------- Page data: trk (all pages) and srch (search pages), set before GTM loads ---------- */
+(function () {
+  var BASE = location.pathname.replace(/\/(index\.html|404\.html|search|listing\/\d+)?\/?$/, '');
+  window.__pwBase = BASE;
+  var rel = location.pathname.slice(BASE.length) || '/';
+  var qs = new URLSearchParams(location.search);
+  var LISTINGS = {
+    '5048213001': { adid: '5048213001', title: '2022 Northgate 26RB Travel Trailer', type: 'travel trailer', make: 'northgate', model: '26rb', year: '2022', condition: 'used', prodprice: '24500', priceText: '$24,500', dealerid: '2211107', dealerName: 'Lakeshore RV Center', phone: '(555) 014-2207', displayMake: 'Northgate' },
+    '5051877002': { adid: '5051877002', title: '2024 Brightfin 22 Pontoon', type: 'pontoon boat', make: 'brightfin', model: '22', year: '2024', condition: 'new', prodprice: '', priceText: '', dealerid: '2212290', dealerName: 'Harbor Point Marine', phone: '(555) 019-8841', displayMake: 'Brightfin' },
+    '5050302003': { adid: '5050302003', title: '2021 Ridgeway 31C Motorhome', type: 'class c', make: 'ridgeway', model: '31c', year: '2021', condition: 'used', prodprice: '89900', priceText: '$89,900', dealerid: '2211107', dealerName: 'Lakeshore RV Center', phone: '(555) 014-2207', displayMake: 'Ridgeway' }
+  };
+  window.__pwListings = LISTINGS;
+  var geo = { statename: 'ohio', statecode: 'oh', city: 'springfield', zipcode: '45501', dma: '542-dayton-oh' };
+  function base(pagename) { var o = { pagename: pagename, channel: 'find' }; for (var k in geo) o[k] = geo[k]; o.canary = 'Nuxt'; o.sitetype = 'SM'; return o; }
+  var trk, page = 'home', m;
+  if (rel === '/search') {
+    page = 'search';
+    trk = base('search/results');
+    trk.searchsource = 'listings search'; trk.sortby = 'sort (featured)'; trk.numresults = '142'; trk.pagenumber = '1';
+    trk.facetchoice = [qs.get('price') ? 'price' : '', qs.get('condition') ? 'condition' : ''].filter(Boolean).join(',');
+    window.srch = { keyword: qs.get('keyword') || 'trailer', condition: qs.get('condition') || '', pricerange: qs.get('price') || '', make: '', category: '', searchradius: '50' };
+  } else if ((m = rel.match(/^\/listing\/(\d+)$/)) && LISTINGS[m[1]]) {
+    page = 'detail';
+    var l = LISTINGS[m[1]];
+    trk = base('detail');
+    trk.adid = l.adid; trk.type = l.type; trk.make = l.make; trk.model = l.model; trk.year = l.year; trk.condition = l.condition;
+    trk.prodprice = l.prodprice; trk.dealerid = l.dealerid; trk.listingsellertype = 'dealer'; trk.listingtier = 'premium';
+    window.__pwListing = l;
+  } else {
+    trk = base('home');
+  }
+  window.__pwPage = page;
+  window.trk = trk;
+})();
+
+/* ---------- GTM loader: built-in ID, or ?gtm=GTM-XXXX (remembered in this browser) ---------- */
 window.dataLayer = window.dataLayer || [];
 (function () {
   var id = null;
@@ -133,6 +165,9 @@ window.dataLayer = window.dataLayer || [];
   if (!id && /^GTM-/.test(BAKED)) id = BAKED;
   try { if (id) localStorage.setItem('pw_gtm_id', id); else id = localStorage.getItem('pw_gtm_id'); } catch (e) {}
   window.__gtmId = (id && /^GTM-[A-Z0-9]+$/i.test(id)) ? id.toUpperCase() : null;
+  if (window.__gtmId) {
+    (function (w, d, s, l, i) { w[l] = w[l] || []; w[l].push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' }); var f = d.getElementsByTagName(s)[0], j = d.createElement(s), dl = l != 'dataLayer' ? '&l=' + l : ''; j.async = true; j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i + dl; f.parentNode.insertBefore(j, f); })(window, document, 'script', 'dataLayer', window.__gtmId);
+  }
 })();
 </script>
 </head>
@@ -147,18 +182,13 @@ window.dataLayer = window.dataLayer || [];
 <header>
   <div class="brand">Pinewake Exchange<small>fictional test site</small></div>
   <nav>
-    <a id="navHome">Home</a>
-    <button class="btn secondary" id="signIn">Sign in</button>
+    <a id="navHome" data-track="Nav - Home">Home</a>
+    <a id="navSell" data-track="Nav - Sell">Sell</a>
+    <button class="btn secondary" id="signIn" data-track="Nav - Log In">Log in</button>
   </nav>
 </header>
 <main id="app"></main>
-<footer>Pinewake Exchange is fictional. Nothing on this page sends data anywhere except to your own GTM preview.</footer>
-
-<div class="consent" id="consent">
-  <b>Cookies</b>
-  <div class="muted">We use analytics cookies to improve the site. Do you accept analytics cookies?</div>
-  <div class="row"><button class="btn" id="consentYes">Accept</button><button class="btn secondary" id="consentNo">Decline</button></div>
-</div>
+<footer><a data-track="Footer-About">About</a> · <a data-track="Footer-Need Help">Need help?</a><br>Pinewake Exchange is fictional. Nothing on this page sends data anywhere except to your own GTM preview.</footer>
 
 <div class="fslog" id="fslog">
   <div class="hd"><b>Fullstory call log (simulated)</b><button id="logCopy">Copy log</button><button id="logClear">Clear</button><button id="logToggle">Hide</button></div>
@@ -168,7 +198,7 @@ window.dataLayer = window.dataLayer || [];
 <aside class="drawer" id="drawer">
   <button style="float:right" id="briefClose">Close</button>
   <h1 style="font-size:21px;margin-top:0">15-minute work sample: GTM + Fullstory</h1>
-  <p>Pinewake Exchange is a made-up listings marketplace. It pushes events to <code>window.dataLayer</code>. Build the tracking below in <b>your own GTM container</b>, sending data to Fullstory. Fullstory is already on this page in simulated mode. Every call you make shows in the <b>Fullstory call log</b> at the bottom right, along with any errors Fullstory would give.</p>
+  <p>Pinewake Exchange is a made-up listings marketplace. Build the tracking below in the GTM container you've been given, sending data to Fullstory. Fullstory is already on this page in simulated mode. Every call you make shows in the <b>Fullstory call log</b> at the bottom right, along with any errors Fullstory would give. The log is kept as you move between pages.</p>
   <p>In GTM, click <b>Preview</b> and connect Tag Assistant to the start link your interviewer gave you.</p>
 
   <h2>Rules</h2>
@@ -176,13 +206,13 @@ window.dataLayer = window.dataLayer || [];
     <li>Only change things in GTM. Don't edit this page's code.</li>
     <li>Don't install the Fullstory snippet or template. Call the v2 browser API from your tags, for example <code>FS('trackEvent', { name, properties })</code>.</li>
     <li>You can use the GTM and Fullstory docs. Please think out loud.</li>
-    <li>Find the events and keys you need with Tag Assistant or the console.</li>
+    <li>Find the data you need yourself, using Tag Assistant, the console and the page's elements.</li>
   </ul>
 
   <h2>Requirements (in order)</h2>
   <ol>
-    <li><b>Listing Viewed</b> event on each listing page, with the listing ID and make, plus the price as a number in US dollars (for example <code>24500</code>). The price must be right for the listing being viewed.</li>
-    <li><b>Lead Submitted</b> event, <b>only when the lead form succeeds</b>, with the lead ID and listing ID.</li>
+    <li><b>Listing Viewed</b> event on each listing page, with the listing ID and make, plus the price as a number (for example <code>24500</code>). If a listing has no price, don't send a price.</li>
+    <li><b>Lead Submitted</b> event, <b>only when the lead form is sent successfully</b>, with the lead reference number and the listing ID.</li>
     <li><b>If you have time:</b> a <b>Phone Revealed</b> event when a visitor reveals the dealer's phone on the <b>main listing</b> (not in the similar-listings cards), with the listing ID.</li>
   </ol>
   <p class="muted">When time is up, your interviewer will give you a short click-path to run. Then click <b>Copy log</b> and paste it into the chat.</p>
@@ -191,120 +221,86 @@ window.dataLayer = window.dataLayer || [];
 
 <script>
 (function () {
-  /* Base path: '' on localhost, '/<repo>' on a GitHub Pages project site */
-  var BASE = location.pathname.replace(/\/(index\.html|404\.html|search|listing\/\d+)?\/?$/, '');
-  var LISTINGS = {
-    '48213': { id: '48213', title: '2022 Northgate 26RB Travel Trailer', category: 'Travel Trailer', make: 'Northgate', price: '$24,500', dealer: 'D-1107', dealerName: 'Lakeshore RV Center', condition: 'Used', phone: '(555) 014-2207' },
-    '51877': { id: '51877', title: '2024 Brightfin 22 Pontoon', category: 'Pontoon Boat', make: 'Brightfin', price: null, dealer: 'D-2290', dealerName: 'Harbor Point Marine', condition: 'New', phone: '(555) 019-8841' },
-    '50302': { id: '50302', title: '2021 Ridgeway 31C Motorhome', category: 'Class C Motorhome', make: 'Ridgeway', price: '$89,900', dealer: 'D-1107', dealerName: 'Lakeshore RV Center', condition: 'Used', phone: '(555) 014-2207' }
-  };
-  var RESULT_COUNT = 142;
-  var PAGES = { home: ['home', 'Home'], search: ['search', 'Search Results'], detail: ['detail', 'Listing Detail'] };
-  var state = { term: 'trailer', priceMax: false, condition: 'any', signedIn: false };
+  var BASE = window.__pwBase, L = window.__pwListings, page = window.__pwPage;
+  var qs = new URLSearchParams(location.search);
   var app = document.getElementById('app');
-  function push(obj) { window.dataLayer.push(obj); }
-  function pagePush(eventName, key) { var p = PAGES[key]; var o = V.page(p[0], p[1]); o.event = eventName; push(o); }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function go(url) { location.href = BASE + url; }
+  function phoneButton(track) { return '<button class="' + (track.mini ? 'mini' : 'btn') + '" data-track="' + esc(track.value) + '"><span class="ico" aria-hidden="true">&#9742;</span> <span class="lbl">Show phone number</span></button>'; }
 
-  function renderHome() {
+  if (page === 'home') {
     app.innerHTML = '<section class="hero"><h1>Find your next RV or boat</h1>' +
-      '<div class="searchrow"><input id="q" value="' + esc(state.term) + '" aria-label="Search"><button class="btn" id="go">Search</button></div>' +
+      '<div class="searchrow"><input id="q" value="trailer" aria-label="Search"><button class="btn" id="go" data-track="Home - Search Button">Search</button></div>' +
       '<p class="muted">Popular: travel trailers, pontoons, Class C motorhomes</p></section>';
-    document.getElementById('go').onclick = function () { state.term = document.getElementById('q').value.trim() || 'trailer'; go(BASE + '/search?q=' + encodeURIComponent(state.term)); };
+    document.getElementById('go').onclick = function () { go('/search?keyword=' + encodeURIComponent(document.getElementById('q').value.trim() || 'trailer')); };
   }
-  function renderSearch() {
-    var cards = ['48213', '51877', '50302'].map(function (id) {
-      var l = LISTINGS[id];
-      return '<div class="card" data-id="' + id + '"><div><b>' + esc(l.title) + '</b><div class="muted">' + esc(l.category) + ' · ' + esc(l.condition) + ' · ' + esc(l.dealerName) + '</div></div><div class="price">' + (l.price ? esc(l.price) : '<span class="muted" style="font-size:14px">Price on request</span>') + '</div></div>';
+
+  if (page === 'search') {
+    var kw = window.srch.keyword;
+    var cards = ['5048213001', '5051877002', '5050302003'].map(function (id) {
+      var l = L[id];
+      return '<div class="card" data-id="' + id + '" data-track="srp|search-results|link|navigation|view-details"><div><b>' + esc(l.title) + '</b><div class="muted">' + esc(l.type) + ' · ' + esc(l.condition) + ' · ' + esc(l.dealerName) + '</div></div><div class="price">' + (l.priceText ? esc(l.priceText) : '<span class="muted" style="font-size:14px">Call for price</span>') + '</div></div>';
     }).join('');
     app.innerHTML = '<div class="grid"><aside class="panel"><b>Filters</b>' +
-      '<label style="display:block;margin-top:10px"><input type="checkbox" id="fPrice"' + (state.priceMax ? ' checked' : '') + '> Under $30,000</label>' +
-      '<label style="display:block;margin-top:10px">Condition<br><select id="fCond"><option value="any">Any</option><option value="new">New</option><option value="used">Used</option></select></label></aside>' +
-      '<section><h2 style="margin-top:0">' + RESULT_COUNT + ' results for "' + esc(state.term) + '"</h2>' + cards + '</section></div>';
-    document.getElementById('fCond').value = state.condition;
-    Array.prototype.forEach.call(app.querySelectorAll('.card'), function (c) { c.onclick = function () { go(BASE + '/listing/' + c.getAttribute('data-id')); }; });
-    document.getElementById('fPrice').onchange = function (e) { state.priceMax = e.target.checked; applyFilter('price_max', e.target.checked ? '30000' : 'none'); };
-    document.getElementById('fCond').onchange = function (e) { state.condition = e.target.value; applyFilter('condition', e.target.value); };
+      '<label style="display:block;margin-top:10px"><input type="checkbox" id="fPrice" data-track="srp|search-facets|checkbox|discovery|apply-filter"' + (qs.get('price') ? ' checked' : '') + '> Under $30,000</label>' +
+      '<label style="display:block;margin-top:10px">Condition<br><select id="fCond" data-track="srp|search-facets|dropdown|discovery|apply-filter"><option value="">Any</option><option value="new">New</option><option value="used">Used</option></select></label></aside>' +
+      '<section><h2 style="margin-top:0">142 results for "' + esc(kw) + '"</h2>' + cards + '</section></div>';
+    document.getElementById('fCond').value = qs.get('condition') || '';
+    Array.prototype.forEach.call(app.querySelectorAll('.card'), function (c) { c.onclick = function () { go('/listing/' + c.getAttribute('data-id')); }; });
+    function refilter() {
+      var p = new URLSearchParams(); p.set('keyword', kw);
+      if (document.getElementById('fPrice').checked) p.set('price', '0-30000');
+      var c = document.getElementById('fCond').value; if (c) p.set('condition', c);
+      go('/search?' + p.toString());
+    }
+    document.getElementById('fPrice').onchange = refilter;
+    document.getElementById('fCond').onchange = refilter;
   }
-  function applyFilter(name, value) {
-    var qs = new URLSearchParams(location.search);
-    if (value === 'none' || value === 'any') qs.delete(name); else qs.set(name, value);
-    history.replaceState({}, '', BASE + '/search?' + qs.toString());
-    push(V.filter(name, value));
-  }
-  function phoneButton(attrs) { return '<button ' + attrs + '><span class="ico" aria-hidden="true">&#9742;</span> <span class="lbl">Show phone number</span></button>'; }
-  function renderListing(id) {
-    var l = LISTINGS[id];
-    if (!l) { app.innerHTML = '<p>Listing not found. <a id="bk">Back home</a></p>'; document.getElementById('bk').onclick = function () { go(BASE + '/'); }; return; }
-    var others = Object.keys(LISTINGS).filter(function (k) { return k !== id; });
+
+  if (page === 'detail') {
+    var l = window.__pwListing;
+    var others = Object.keys(L).filter(function (k) { return k !== l.adid; });
     var sim = others.map(function (k) {
-      var o = LISTINGS[k];
-      return '<div class="similar-card"><b>' + esc(o.title) + '</b><div class="muted">' + esc(o.dealerName) + '</div><div style="display:flex;gap:8px;margin-top:8px">' + phoneButton(V.phoneMini) + '<a data-go="' + k + '">View</a></div><div class="muted mini-phone" style="display:none;margin-top:6px">' + esc(o.phone) + '</div></div>';
+      var o = L[k];
+      return '<div class="similar-card"><b>' + esc(o.title) + '</b><div class="muted">' + esc(o.dealerName) + '</div><div style="display:flex;gap:8px;margin-top:8px">' + phoneButton({ value: V.phoneSimilar, mini: true }) + '<a data-go="' + k + '" data-track="Detail-Similar Listings-View">View</a></div><div class="muted mini-phone" style="display:none;margin-top:6px">' + esc(o.phone) + '</div></div>';
     }).join('');
-    app.innerHTML = '<p><a id="bk">&larr; Back to results</a></p><div class="grid" style="grid-template-columns:1fr 320px">' +
-      '<section class="panel listing-main"><h1>' + esc(l.title) + '</h1><div class="price">' + (l.price ? esc(l.price) : 'Price on request') + '</div>' +
-      '<dl class="specs"><dt>Category</dt><dd>' + esc(l.category) + '</dd><dt>Make</dt><dd>' + esc(l.make) + '</dd><dt>Condition</dt><dd>' + esc(l.condition) + '</dd><dt>Dealer</dt><dd>' + esc(l.dealerName) + '</dd></dl>' +
-      phoneButton(V.phoneMain) + '</section>' +
+    app.innerHTML = '<p><a id="bk" data-track="vdp|breadcrumbs|link|navigation|back-to-results">&larr; Back to results</a></p><div class="grid" style="grid-template-columns:1fr 320px">' +
+      '<section class="panel listing-main"><h1>' + esc(l.title) + '</h1><div class="price">' + (l.priceText ? esc(l.priceText) : 'Call for price') + '</div>' +
+      '<dl class="specs"><dt>Type</dt><dd>' + esc(l.type) + '</dd><dt>Make</dt><dd>' + esc(l.displayMake) + '</dd><dt>Condition</dt><dd>' + esc(l.condition) + '</dd><dt>Dealer</dt><dd>' + esc(l.dealerName) + '</dd></dl>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' + phoneButton({ value: V.phoneMain }) + '<button class="btn secondary" data-track="Detail-Link-Save this Listing">Save</button><button class="btn secondary" data-track="Detail-Link-Send to Friend">Share</button></div></section>' +
       '<aside class="panel"><b>Email the dealer</b><form id="lead" novalidate><label for="ln">Name</label><input id="ln"><label for="le">Email</label><input id="le" type="email"><label for="lm">Message</label><textarea id="lm" rows="3">Is this still available?</textarea>' +
-      '<button class="btn" style="margin-top:10px;width:100%">Send</button><div class="msg" id="leadMsg"></div></form></aside></div>' +
+      '<button class="btn" style="margin-top:10px;width:100%" data-track="pdp|lead-form|button|send-email">Send</button><div class="lead-state-box" id="leadBox"></div></form></aside></div>' +
       '<h3>Similar listings</h3><div class="similar">' + sim + '</div>';
-    document.getElementById('bk').onclick = function () { go(BASE + '/search?q=' + encodeURIComponent(state.term)); };
+    document.getElementById('bk').onclick = function () { go('/search?keyword=trailer'); };
     var main = app.querySelector('.listing-main button');
     main.onclick = function () { main.querySelector('.lbl').textContent = l.phone; };
     Array.prototype.forEach.call(app.querySelectorAll('.similar-card'), function (card) {
       card.querySelector('button').onclick = function () { card.querySelector('.mini-phone').style.display = 'block'; };
-      card.querySelector('[data-go]').onclick = function () { go(BASE + '/listing/' + card.querySelector('[data-go]').getAttribute('data-go')); };
+      card.querySelector('[data-go]').onclick = function () { go('/listing/' + card.querySelector('[data-go]').getAttribute('data-go')); };
     });
+    var leadCount = 0;
     document.getElementById('lead').onsubmit = function (e) {
       e.preventDefault();
       var email = document.getElementById('le').value.trim();
-      var msg = document.getElementById('leadMsg');
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        msg.className = 'msg err'; msg.textContent = 'Please enter a valid email address.';
-        push(V.lead({ ok: false }));
-      } else {
-        leadCounter += 1;
-        msg.className = 'msg ok'; msg.textContent = 'Sent. The dealer will be in touch.';
-        push(V.lead({ ok: true, leadId: 'LD-' + (90416 + leadCounter) }));
-      }
+      var box = document.getElementById('leadBox');
+      /* simulate a short server round-trip, then render the result message */
+      box.innerHTML = '';
+      setTimeout(function () {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { box.innerHTML = V.leadMessage(false); }
+        else { leadCount += 1; box.innerHTML = V.leadMessage(true, 'LD-' + (90416 + leadCount)); }
+      }, 400);
     };
   }
-  var leadCounter = 0;
 
-  function route(isInitial) {
-    var path = location.pathname.slice(BASE.length) || '/';
-    var eventName = isInitial ? V.pageEvent : V.routeEvent;
-    if (path === '/' || path === '/index.html') { renderHome(); pagePush(eventName, 'home'); return; }
-    if (path === '/search') {
-      var q = new URLSearchParams(location.search).get('q'); if (q) state.term = q;
-      renderSearch(); pagePush(eventName, 'search'); push(V.search(state.term, RESULT_COUNT)); return;
-    }
-    var m = path.match(/^\/listing\/(\d+)$/);
-    if (m) {
-      renderListing(m[1]); pagePush(eventName, 'detail');
-      var l = LISTINGS[m[1]]; if (l) push(V.listing({ id: l.id, category: l.category, make: l.make, price: l.price, dealer: l.dealer }));
-      return;
-    }
-    renderHome(); pagePush(eventName, 'home');
-  }
-  function go(url) { history.pushState({}, '', url); window.scrollTo(0, 0); route(false); }
-  window.addEventListener('popstate', function () { route(false); });
-  document.getElementById('navHome').onclick = function () { go(BASE + '/'); };
+  document.getElementById('navHome').onclick = function () { go('/'); };
+  document.getElementById('signIn').onclick = function () { this.textContent = 'Log in (demo only)'; };
 
-  document.getElementById('signIn').onclick = function () {
-    if (state.signedIn) return;
-    state.signedIn = true; this.textContent = 'Signed in: Demo Buyer';
-    push(V.login({ id: 'u_7731', email: 'demo.buyer@example.com', tier: 'premium' }));
-  };
-  function consent(granted) { document.getElementById('consent').style.display = 'none'; push(V.consent(granted)); }
-  document.getElementById('consentYes').onclick = function () { consent(true); };
-  document.getElementById('consentNo').onclick = function () { consent(false); };
-
-  /* Harness: brief drawer, GTM loader, Fullstory log panel */
+  /* Harness: brief drawer, GTM ID input, Fullstory log panel */
   var drawer = document.getElementById('drawer');
   document.getElementById('briefBtn').onclick = function () { drawer.classList.add('open'); };
   document.getElementById('briefClose').onclick = function () { drawer.classList.remove('open'); };
   document.getElementById('gtmInput').value = window.__gtmId || '';
+  if (window.__gtmId) document.getElementById('gtmStatus').textContent = 'GTM: ' + window.__gtmId;
   document.getElementById('gtmLoad').onclick = function () {
     var v = document.getElementById('gtmInput').value.trim();
     if (!/^GTM-[A-Z0-9]+$/i.test(v)) { document.getElementById('gtmStatus').textContent = 'GTM: ID should look like GTM-XXXXXXX'; return; }
@@ -328,13 +324,6 @@ window.dataLayer = window.dataLayer || [];
     function fallback() { ta.style.display = 'block'; ta.value = text; ta.select(); }
     try { navigator.clipboard.writeText(text).then(function () { document.getElementById('logCopy').textContent = 'Copied'; }, fallback); } catch (e) { fallback(); }
   };
-
-  route(true);
-
-  if (window.__gtmId) {
-    (function (w, d, s, l, i) { w[l] = w[l] || []; w[l].push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' }); var f = d.getElementsByTagName(s)[0], j = d.createElement(s), dl = l != 'dataLayer' ? '&l=' + l : ''; j.async = true; j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i + dl; f.parentNode.insertBefore(j, f); })(window, document, 'script', 'dataLayer', window.__gtmId);
-    document.getElementById('gtmStatus').textContent = 'GTM: ' + window.__gtmId;
-  }
 })();
 </script>
 </body>
