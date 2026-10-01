@@ -115,10 +115,10 @@
 
 /* ---------- Site build config ---------- */
 var V = {
-  build: 'PW-3K',
-  phoneMain: 'vdp|primary-listing-info|button|conversion|reveal-phone',
-  phoneSimilar: 'vdp|listing-carousel-similar|button|conversion|reveal-phone',
-  leadMessage: function (ok, id) { return ok ? '<div class="lead-status" data-state="sent" data-ref="' + id + '">Thanks, your message was sent (ref ' + id + ').</div>' : '<div class="lead-status" data-state="failed">Please enter a valid email address.</div>'; }
+  build: 'PW-7Q',
+  phoneMain: 'Listing Phone Number Click - Inline',
+  phoneSimilar: 'Listing Phone Number Click - Similar',
+  leadMessage: function (ok, id) { return ok ? '<div class="lead-msg is-success" data-lead-id="' + id + '">Sent! Your reference number is ' + id + '.</div>' : '<div class="lead-msg is-error">Please enter a valid email address.</div>'; }
 };
 
 /* ---------- Page data: trk (all pages) and srch (search pages), set before GTM loads ---------- */
@@ -161,7 +161,7 @@ window.dataLayer = window.dataLayer || [];
 (function () {
   var id = null;
   try { id = new URLSearchParams(location.search).get('gtm'); } catch (e) {}
-  var BAKED = 'GTM-WWGR22B4';
+  var BAKED = 'GTM-M28X8KV4';
   if (!id && /^GTM-/.test(BAKED)) id = BAKED;
   try { if (id) localStorage.setItem('pw_gtm_id', id); else id = localStorage.getItem('pw_gtm_id'); } catch (e) {}
   window.__gtmId = (id && /^GTM-[A-Z0-9]+$/i.test(id)) ? id.toUpperCase() : null;
