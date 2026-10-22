@@ -205,8 +205,8 @@ window.dataLayer = window.dataLayer || [];
   <ul>
     <li>Only change things in GTM. Don't edit this page's code.</li>
     <li>Don't install the Fullstory snippet or template. Call the v2 browser API from your tags, for example <code>FS('trackEvent', { name, properties })</code>.</li>
-    <li>You can use the GTM and Fullstory docs. Please think out loud.</li>
-    <li>Find the data you need yourself, using Tag Assistant, the console and the page's elements.</li>
+    <li>You can use the GTM and Fullstory docs, including the <a href="https://developer.fullstory.com/browser/capture-events/analytics-events/" target="_blank" rel="noopener">Fullstory trackEvent reference</a>. Please think out loud.</li>
+    <li>The page's data is in a global <code>trk</code> object. To see it, open the browser console (F12, then Console), type <code>trk</code> and press Enter. Buttons and links also carry <code>data-track</code> attributes.</li>
   </ul>
 
   <h2>Requirements (in order)</h2>
